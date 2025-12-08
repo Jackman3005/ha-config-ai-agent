@@ -325,6 +325,28 @@ Remember: You're helping manage a production Home Assistant system. Safety and c
                 if self.temperature is not None:
                     api_params["temperature"] = self.temperature
 
+                # Debug logging to diagnose API request issues
+                try:
+                    request_json = json.dumps(api_params)
+                    request_size = len(request_json)
+                    logger.debug(f"[DEBUG] API request - messages: {len(messages)}, tools: {len(tools)}, size: {request_size} bytes")
+
+                    # Log each message's role and size for debugging
+                    for idx, msg in enumerate(messages):
+                        msg_json = json.dumps(msg)
+                        msg_role = msg.get('role', 'unknown')
+                        msg_size = len(msg_json)
+                        # Check for potential issues
+                        has_tool_calls = 'tool_calls' in msg
+                        tool_call_id = msg.get('tool_call_id', '')
+                        logger.debug(f"[DEBUG] Message {idx}: role={msg_role}, size={msg_size}, has_tool_calls={has_tool_calls}, tool_call_id={tool_call_id[:20] if tool_call_id else 'N/A'}")
+
+                        # If message is large, log a warning with truncated content
+                        if msg_size > 10000:
+                            logger.warning(f"[DEBUG] Large message {idx} ({msg_size} bytes): {msg_json[:500]}...")
+                except Exception as debug_err:
+                    logger.error(f"[DEBUG] Failed to serialize request for debugging: {debug_err}")
+
                 stream = await self.client.chat.completions.create(**api_params)
 
                 # Accumulate the streaming response
@@ -559,9 +581,34 @@ Remember: You're helping manage a production Home Assistant system. Safety and c
 
         except Exception as e:
             logger.error(f"Agent streaming error: {e}", exc_info=True)
+
+            # Enhanced error logging for API errors
+            error_details = str(e)
+            if hasattr(e, 'response'):
+                try:
+                    response_text = getattr(e.response, 'text', None)
+                    if response_text:
+                        logger.error(f"[DEBUG] API error response body: {response_text[:2000]}")
+                except Exception:
+                    pass
+
+            if hasattr(e, 'body'):
+                logger.error(f"[DEBUG] API error body: {e.body}")
+
+            # Log the last few messages that were being sent when error occurred
+            if 'messages' in locals():
+                logger.error(f"[DEBUG] Error occurred with {len(messages)} messages in request")
+                # Log the last 3 messages for context
+                for idx, msg in enumerate(messages[-3:]):
+                    try:
+                        msg_json = json.dumps(msg)
+                        logger.error(f"[DEBUG] Recent message {len(messages) - 3 + idx}: {msg_json[:1000]}...")
+                    except Exception as json_err:
+                        logger.error(f"[DEBUG] Could not serialize message {len(messages) - 3 + idx}: {json_err}")
+
             yield {
                 "event": "error",
-                "data": json.dumps({"error": str(e)})
+                "data": json.dumps({"error": error_details})
             }
 
     def store_changeset(self, changeset_data: Dict[str, Any]) -> str:

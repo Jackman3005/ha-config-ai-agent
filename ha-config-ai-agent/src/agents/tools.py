@@ -319,8 +319,25 @@ class AgentTools:
             ws_url = "ws://supervisor/core/websocket"
             ws_client = HomeAssistantWebSocket(ws_url, supervisor_token)
             await ws_client.connect()
-            logs = await ws_client.get_system_logs()
+            raw_logs = await ws_client.get_system_logs()
             await ws_client.close()
+
+            logs = []
+            for record in raw_logs:
+                message = record.get("message", [])
+                if isinstance(message, list):
+                    message = " ".join(str(m) for m in message)
+                logs.append({
+                    "name": record.get("name", ""),
+                    "message": message,
+                    "level": record.get("level", ""),
+                    "source": record.get("source", []),
+                    "timestamp": record.get("timestamp", 0),
+                    "exception": record.get("exception", ""),
+                    "count": record.get("count", 1),
+                    "first_occurred": record.get("first_occurred", 0),
+                })
+            logger.debug(f"Retrieved {len(logs)} system log entries via WebSocket")
             return logs
         except Exception as e:
             logger.error(f"Failed to get system logs: {e}")
