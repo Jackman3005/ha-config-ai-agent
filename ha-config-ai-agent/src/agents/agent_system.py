@@ -347,6 +347,13 @@ Remember: You're helping manage a production Home Assistant system. Safety and c
                 except Exception as debug_err:
                     logger.error(f"[DEBUG] Failed to serialize request for debugging: {debug_err}")
 
+                # Normalize all tool_calls with empty arguments to valid JSON "{}"
+                for msg in messages:
+                    if "tool_calls" in msg:
+                        for tc in msg["tool_calls"]:
+                            if not tc["function"]["arguments"]:
+                                tc["function"]["arguments"] = "{}"
+
                 stream = await self.client.chat.completions.create(**api_params)
 
                 # Accumulate the streaming response
