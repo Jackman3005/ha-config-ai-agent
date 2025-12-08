@@ -384,8 +384,15 @@ Remember: You're helping manage a production Home Assistant system. Safety and c
                     # Handle tool calls
                     if delta.tool_calls:
                         for tool_call_delta in delta.tool_calls:
-                            # Initialize new tool call
-                            # Handle index if provided (OpenAI format), otherwise default to 0 (Google format)
+                            # Log raw delta values to diagnose streaming format differences
+                            logger.debug(
+                                f"[TOOL_DELTA] index={tool_call_delta.index}, "
+                                f"id={tool_call_delta.id}, "
+                                f"name={tool_call_delta.function.name if tool_call_delta.function else None}, "
+                                f"args_chunk={tool_call_delta.function.arguments[:50] if tool_call_delta.function and tool_call_delta.function.arguments else None}"
+                            )
+
+                            # Handle index if provided (OpenAI format), otherwise default to 0
                             index = tool_call_delta.index if tool_call_delta.index is not None else 0
 
                             # Ensure we have a slot for this tool call
@@ -451,6 +458,14 @@ Remember: You're helping manage a production Home Assistant system. Safety and c
 
                 # We have tool calls - add assistant message to history
                 logger.info(f"[ITERATION {iteration}] Processing {len(accumulated_tool_calls)} tool call(s)")
+
+                # Log accumulated tool calls summary for debugging
+                for idx, tc in enumerate(accumulated_tool_calls):
+                    logger.debug(
+                        f"[TOOL_ACCUMULATED] slot={idx}, id={tc.get('id', 'MISSING')}, "
+                        f"name={tc.get('function', {}).get('name', 'MISSING')}, "
+                        f"args_len={len(tc.get('function', {}).get('arguments', ''))}"
+                    )
 
                 assistant_message = {
                     "role": "assistant",

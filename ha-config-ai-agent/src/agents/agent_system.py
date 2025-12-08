@@ -325,28 +325,6 @@ Remember: You're helping manage a production Home Assistant system. Safety and c
                 if self.temperature is not None:
                     api_params["temperature"] = self.temperature
 
-                # Debug logging to diagnose API request issues
-                try:
-                    request_json = json.dumps(api_params)
-                    request_size = len(request_json)
-                    logger.debug(f"[DEBUG] API request - messages: {len(messages)}, tools: {len(tools)}, size: {request_size} bytes")
-
-                    # Log each message's role and size for debugging
-                    for idx, msg in enumerate(messages):
-                        msg_json = json.dumps(msg)
-                        msg_role = msg.get('role', 'unknown')
-                        msg_size = len(msg_json)
-                        # Check for potential issues
-                        has_tool_calls = 'tool_calls' in msg
-                        tool_call_id = msg.get('tool_call_id', '')
-                        logger.debug(f"[DEBUG] Message {idx}: role={msg_role}, size={msg_size}, has_tool_calls={has_tool_calls}, tool_call_id={tool_call_id[:20] if tool_call_id else 'N/A'}")
-
-                        # If message is large, log a warning with truncated content
-                        if msg_size > 10000:
-                            logger.warning(f"[DEBUG] Large message {idx} ({msg_size} bytes): {msg_json[:500]}...")
-                except Exception as debug_err:
-                    logger.error(f"[DEBUG] Failed to serialize request for debugging: {debug_err}")
-
                 # Normalize all tool_calls with empty arguments to valid JSON "{}"
                 for msg in messages:
                     if "tool_calls" in msg:
@@ -406,8 +384,15 @@ Remember: You're helping manage a production Home Assistant system. Safety and c
                     # Handle tool calls
                     if delta.tool_calls:
                         for tool_call_delta in delta.tool_calls:
-                            # Initialize new tool call
-                            # Handle index if provided (OpenAI format), otherwise default to 0 (Google format)
+                            # Log raw delta values to diagnose streaming format differences
+                            logger.debug(
+                                f"[TOOL_DELTA] index={tool_call_delta.index}, "
+                                f"id={tool_call_delta.id}, "
+                                f"name={tool_call_delta.function.name if tool_call_delta.function else None}, "
+                                f"args_chunk={tool_call_delta.function.arguments[:50] if tool_call_delta.function and tool_call_delta.function.arguments else None}"
+                            )
+
+                            # Handle index if provided (OpenAI format), otherwise default to 0
                             index = tool_call_delta.index if tool_call_delta.index is not None else 0
 
                             # Ensure we have a slot for this tool call
@@ -473,6 +458,14 @@ Remember: You're helping manage a production Home Assistant system. Safety and c
 
                 # We have tool calls - add assistant message to history
                 logger.info(f"[ITERATION {iteration}] Processing {len(accumulated_tool_calls)} tool call(s)")
+
+                # Log accumulated tool calls summary for debugging
+                for idx, tc in enumerate(accumulated_tool_calls):
+                    logger.debug(
+                        f"[TOOL_ACCUMULATED] slot={idx}, id={tc.get('id', 'MISSING')}, "
+                        f"name={tc.get('function', {}).get('name', 'MISSING')}, "
+                        f"args_len={len(tc.get('function', {}).get('arguments', ''))}"
+                    )
 
                 assistant_message = {
                     "role": "assistant",
