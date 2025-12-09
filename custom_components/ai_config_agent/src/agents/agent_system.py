@@ -338,8 +338,7 @@ Remember: You're helping manage a production Home Assistant system. Safety and c
                 accumulated_content = ""
                 accumulated_tool_calls = []
                 current_tool_call = None
-                tool_calls_announced = False
-                tool_calls_pending_announced = False
+                announced_tool_call_count = 0
                 # Track token usage
                 input_tokens = 0
                 output_tokens = 0
@@ -414,8 +413,9 @@ Remember: You're helping manage a production Home Assistant system. Safety and c
                                 if tool_call_delta.function.arguments:
                                     current_tool_call["function"]["arguments"] += tool_call_delta.function.arguments
 
-                        # Announce tool calls to UI as soon as we know them (may have partial arguments)
-                        if not tool_calls_announced and any(tc.get("function", {}).get("name") for tc in accumulated_tool_calls):
+                        # Announce tool calls progressively as new ones are discovered
+                        current_named_count = sum(1 for tc in accumulated_tool_calls if tc.get("function", {}).get("name"))
+                        if current_named_count > announced_tool_call_count:
                             yield {
                                 "event": "tool_call",
                                 "data": json.dumps({
@@ -423,7 +423,7 @@ Remember: You're helping manage a production Home Assistant system. Safety and c
                                     "iteration": iteration
                                 })
                             }
-                            tool_calls_announced = True
+                            announced_tool_call_count = current_named_count
 
                     # Check for finish reason
                     if chunk.choices[0].finish_reason:
@@ -475,8 +475,8 @@ Remember: You're helping manage a production Home Assistant system. Safety and c
                 messages.append(assistant_message)
                 new_messages.append(assistant_message)
 
-                # Notify about ALL tool calls upfront before executing any (only if not already announced)
-                if not tool_calls_announced:
+                # Final announcement if any tool calls weren't announced during streaming
+                if announced_tool_call_count < len(accumulated_tool_calls):
                     yield {
                         "event": "tool_call",
                         "data": json.dumps({
@@ -484,7 +484,6 @@ Remember: You're helping manage a production Home Assistant system. Safety and c
                             "iteration": iteration
                         })
                     }
-                    tool_calls_announced = True
 
                 # Execute each tool call and stream results immediately
                 for tool_idx, tool_call in enumerate(accumulated_tool_calls):

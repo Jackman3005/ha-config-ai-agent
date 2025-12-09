@@ -6,8 +6,8 @@ console.log('AI Configuration Agent initializing...');
 let conversationHistory = [];
 let pendingChangeset = null;
 let currentChangesetData = null;
-// Track tool_call announcements per assistant iteration to avoid duplicates
-let toolCallIterationsShown = new Set();
+// Track assistant messages by iteration for progressive tool_call updates
+let assistantMessagesByIteration = {};
 // Track cumulative token usage across entire conversation
 let cumulativeInputTokens = 0;
 let cumulativeOutputTokens = 0;
@@ -99,8 +99,8 @@ async function sendMessage() {
     let loadingIndicator = addLoadingIndicator();
 
     try {
-        // Reset per-request tool call dedupe tracker
-        toolCallIterationsShown = new Set();
+        // Reset per-request iteration tracking for progressive tool_call updates
+        assistantMessagesByIteration = {};
         // Use fetch with streaming instead of EventSource for POST support
         const response = await fetch('api/chat', {
             method: 'POST',
@@ -167,30 +167,39 @@ async function sendMessage() {
                     currentAssistantMessage = null;
 
                 } else if (name === 'tool_call') {
-                    // Dedupe tool_call announcements per iteration
-                    if (typeof data.iteration !== 'undefined') {
-                        if (toolCallIterationsShown.has(data.iteration)) {
-                            return; // skip duplicate
+                    const iteration = data.iteration;
+
+                    // Check if we already have an assistant message for this iteration
+                    if (typeof iteration !== 'undefined' && assistantMessagesByIteration[iteration]) {
+                        // Update existing assistant message's tool_calls
+                        assistantMessagesByIteration[iteration].tool_calls = data.tool_calls;
+                        // Update UI to show new tool calls
+                        updateToolCallMessage(data.tool_calls, iteration);
+                    } else {
+                        // First tool_call for this iteration
+                        // Finalize current streaming message before tool execution UI
+                        if (currentAssistantMessage) {
+                            finalizeAssistantMessageStreaming(currentAssistantMessage);
+                            currentAssistantMessage = null;
                         }
-                        toolCallIterationsShown.add(data.iteration);
+
+                        // Create assistant message with tool calls
+                        const assistantMsg = {
+                            role: 'assistant',
+                            content: currentMessageContent,
+                            tool_calls: data.tool_calls
+                        };
+                        conversationHistory.push(assistantMsg);
+                        currentMessageContent = '';
+
+                        // Track by iteration for subsequent updates
+                        if (typeof iteration !== 'undefined') {
+                            assistantMessagesByIteration[iteration] = assistantMsg;
+                        }
+
+                        // Show tool execution indicator summary with expandable arguments
+                        addToolCallMessage(data.tool_calls, iteration);
                     }
-
-                    // Finalize current streaming message before tool execution UI
-                    if (currentAssistantMessage) {
-                        finalizeAssistantMessageStreaming(currentAssistantMessage);
-                        currentAssistantMessage = null;
-                    }
-
-                    // Add assistant message with tool calls to history
-                    conversationHistory.push({
-                        role: 'assistant',
-                        content: currentMessageContent,
-                        tool_calls: data.tool_calls
-                    });
-                    currentMessageContent = '';
-
-                    // Show tool execution indicator summary with expandable arguments
-                    addToolCallMessage(data.tool_calls);
 
                 } else if (name === 'tool_start') {
                     addSystemMessage(`▶️ Executing: ${data.function}...`);
@@ -520,29 +529,23 @@ function addSystemMessage(content) {
     scrollToBottom();
 }
 
-// Add tool call message with expandable arguments
-function addToolCallMessage(toolCalls) {
-    const messageDiv = document.createElement('div');
-    messageDiv.className = 'message tool-call-message';
-
-    const toolCallId = 'toolcall-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+// Generate HTML content for tool calls (shared between add and update)
+function generateToolCallHtml(toolCalls, detailsId) {
     const toolNames = toolCalls.map(tc => tc.function.name).join(', ');
 
     let html = '<div class="tool-call-content">';
     html += `<div class="tool-call-header">`;
     html += `<span class="tool-call-icon">🔧</span>`;
     html += `<span class="tool-call-summary">Calling ${toolCalls.length} tool(s): ${escapeHtml(toolNames)}</span>`;
-    html += `<button class="tool-call-toggle" onclick="toggleToolCall('${toolCallId}')">▼ Arguments</button>`;
+    html += `<button class="tool-call-toggle" onclick="toggleToolCall('${detailsId}')">▼ Arguments</button>`;
     html += `</div>`;
-    html += `<div class="tool-call-details" id="${toolCallId}" style="display: none;">`;
+    html += `<div class="tool-call-details" id="${detailsId}" style="display: none;">`;
 
-    // Show each tool call with its arguments
     for (let i = 0; i < toolCalls.length; i++) {
         const tc = toolCalls[i];
         html += '<div class="tool-call-item">';
         html += `<div class="tool-call-item-header"><strong>${i + 1}. ${escapeHtml(tc.function.name)}</strong></div>`;
 
-        // Parse and format arguments
         let args;
         try {
             args = typeof tc.function.arguments === 'string'
@@ -558,10 +561,45 @@ function addToolCallMessage(toolCalls) {
 
     html += `</div>`;
     html += '</div>';
+    return html;
+}
 
-    messageDiv.innerHTML = html;
+// Add tool call message with expandable arguments
+function addToolCallMessage(toolCalls, iteration) {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message tool-call-message';
+
+    const detailsId = 'toolcall-details-' + (iteration ?? Date.now());
+    if (typeof iteration !== 'undefined') {
+        messageDiv.id = 'toolcall-msg-' + iteration;
+    }
+
+    messageDiv.innerHTML = generateToolCallHtml(toolCalls, detailsId);
     chatMessages.appendChild(messageDiv);
     scrollToBottom();
+}
+
+// Update existing tool call message with new tool calls
+function updateToolCallMessage(toolCalls, iteration) {
+    const messageDiv = document.getElementById('toolcall-msg-' + iteration);
+    if (!messageDiv) {
+        addToolCallMessage(toolCalls, iteration);
+        return;
+    }
+
+    const detailsId = 'toolcall-details-' + iteration;
+    const wasExpanded = document.getElementById(detailsId)?.style.display !== 'none';
+
+    messageDiv.innerHTML = generateToolCallHtml(toolCalls, detailsId);
+
+    if (wasExpanded) {
+        const newDetails = document.getElementById(detailsId);
+        if (newDetails) {
+            newDetails.style.display = 'block';
+            const button = newDetails.previousElementSibling?.querySelector('.tool-call-toggle');
+            if (button) button.textContent = '▲ Arguments';
+        }
+    }
 }
 
 // Toggle tool call details
@@ -1075,6 +1113,7 @@ function importConversation(event) {
 
             // Clear current conversation
             conversationHistory = [];
+            assistantMessagesByIteration = {};
             chatMessages.innerHTML = '';
 
             // Restore conversation history

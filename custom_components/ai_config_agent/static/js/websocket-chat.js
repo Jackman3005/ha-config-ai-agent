@@ -61,6 +61,7 @@ async function sendMessageWebSocket() {
     currentMessageContent = '';
     loadingIndicator = addLoadingIndicator();
     toolCallArguments = {}; // Reset tool arguments for new conversation
+    assistantMessagesByIteration = {}; // Reset iteration tracking for progressive tool_call updates
 
     try {
         const ws = connectWebSocket();
@@ -140,22 +141,39 @@ function handleWebSocketMessage(message) {
             }
 
         } else if (eventType === 'tool_call') {
-            // Finalize current message if any
-            if (currentAssistantMessage) {
-                finalizeAssistantMessageStreaming(currentAssistantMessage);
-                currentAssistantMessage = null;
+            const iteration = data.iteration;
+
+            // Check if we already have an assistant message for this iteration
+            if (typeof iteration !== 'undefined' && assistantMessagesByIteration[iteration]) {
+                // Update existing assistant message's tool_calls
+                assistantMessagesByIteration[iteration].tool_calls = data.tool_calls;
+                // Update UI to show new tool calls
+                updateToolCallMessage(data.tool_calls, iteration);
+            } else {
+                // First tool_call for this iteration
+                // Finalize current message if any
+                if (currentAssistantMessage) {
+                    finalizeAssistantMessageStreaming(currentAssistantMessage);
+                    currentAssistantMessage = null;
+                }
+
+                // Create assistant message with tool calls
+                const assistantMsg = {
+                    role: 'assistant',
+                    content: currentMessageContent,
+                    tool_calls: data.tool_calls
+                };
+                conversationHistory.push(assistantMsg);
+                currentMessageContent = '';
+
+                // Track by iteration for subsequent updates
+                if (typeof iteration !== 'undefined') {
+                    assistantMessagesByIteration[iteration] = assistantMsg;
+                }
+
+                // Show tool execution indicator summary
+                addToolCallMessage(data.tool_calls, iteration);
             }
-
-            // Add assistant message with tool calls to history
-            conversationHistory.push({
-                role: 'assistant',
-                content: currentMessageContent,
-                tool_calls: data.tool_calls
-            });
-            currentMessageContent = '';
-
-            // Show tool execution indicator summary
-            addSystemMessage(`🔧 Calling ${data.tool_calls.length} tool(s): ${data.tool_calls.map(tc => tc.function.name).join(', ')}`);
 
             // Re-add loading indicator while tools execute and AI processes next response
             if (!loadingIndicator) {
