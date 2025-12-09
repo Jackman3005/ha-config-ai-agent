@@ -144,6 +144,10 @@ function handleWebSocketMessage(message) {
         } else if (eventType === 'tool_call') {
             const iteration = data.iteration;
 
+            console.log('[DEBUG tool_call] iteration:', iteration,
+                        'existing:', assistantMessagesByIteration[iteration],
+                        'map keys:', Object.keys(assistantMessagesByIteration));
+
             // Check if we already have an assistant message for this iteration
             if (typeof iteration !== 'undefined' && assistantMessagesByIteration[iteration]) {
                 // Update existing assistant message's tool_calls
