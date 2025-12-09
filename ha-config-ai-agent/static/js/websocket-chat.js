@@ -4,7 +4,8 @@ let ws = null;
 let currentAssistantMessage = null;
 let currentMessageContent = '';
 let loadingIndicator = null;
-let toolCallArguments = {}; // Store arguments from tool_start events, keyed by tool_call_id
+let toolCallArguments = {};
+let assistantMessagesByIteration = {};
 
 function connectWebSocket() {
     if (ws && ws.readyState === WebSocket.OPEN) {
